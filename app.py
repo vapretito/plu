@@ -112,7 +112,7 @@ def tokens_restantes(email):
 
 
 
-TEMP_DIR = r"C:\temp"
+TEMP_DIR = tempfile.gettempdir()
 os.makedirs(TEMP_DIR, exist_ok=True)
 app = Flask(__name__)
 CORS(app, origins=["https://generator.zunzun.ai"])
