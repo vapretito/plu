@@ -115,7 +115,7 @@ def tokens_restantes(email):
 TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 app = Flask(__name__)
-CORS(app)  # 🔥 Esto va acá, una vez y bien
+CORS(app, origins=["https://generator.zunzun.ai"])
 AIML_KEY = "228a4680f87d41c1966eea088efaa68d"  # Valor literal directamente
 AIML_MODEL = "google/veo3"
 BASE_URL   = "https://api.aimlapi.com/v2"
