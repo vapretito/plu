@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generador de Audio AI</title>
+  <link rel="stylesheet" href="css/style.css" />
+
+</head>
+<body>
+  <h1>Generador de Voz IA</h1>
+
+  <input type="text" id="texto" placeholder="Escribe algo..." />
+  <button id="generar">Generar Audio</button>
+
+  <audio id="audio" controls></audio>
+  <div id="respuesta"></div>
+
+  <script>
+    function cargarMainJS() {
+      const main = document.createElement("script");
+      main.src = "js/main.js";
+      document.head.appendChild(main);
+    }
+
+    if (typeof CSInterface === 'undefined') {
+      console.log("No se detectó CSInterface. Cargando mock...");
+      const script = document.createElement("script");
+      script.src = "js/mock-csinterface.js";
+      script.onload = () => {
+        console.log("Mock CSInterface cargado.");
+        cargarMainJS();
+      };
+      document.head.appendChild(script);
+    } else {
+      cargarMainJS();
+    }
+  </script>
+</body>
+</html>
