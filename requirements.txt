@@ -1,5 +1,6 @@
 Flask
 requests
-yt-dlp
 openai
+yt-dlp
 python-dotenv
+flask-cors
