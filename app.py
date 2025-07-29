@@ -253,7 +253,9 @@ def generar_video():
             filename = f"{speaker}_{slug_t}_{safe_id}_{rand}.mp4"
 
             tmp_path = os.path.join(TEMP_DIR, filename)
-            static_path = os.path.join("static", "videos", filename)
+            VIDEOS_DIR = os.path.join(STATIC_DIR, "videos")
+            os.makedirs(VIDEOS_DIR, exist_ok=True)
+            static_path = os.path.join(VIDEOS_DIR, filename)
             os.makedirs(os.path.dirname(static_path), exist_ok=True)
 
             print("⬇️  Descargando a:", tmp_path)
