@@ -176,7 +176,9 @@ def generar_video():
         return jsonify({"error": "Faltan datos"}), 400
 
     guardar_usuario(email)
-    modo = obtener_modo(email)
+    modo = obtener_modo(email) or "standard"
+    print("🎛️ Modo detectado:", modo, flush=True)
+
 
     headers = {
         "Authorization": f"Bearer {AIML_KEY}",
