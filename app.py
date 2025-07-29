@@ -217,8 +217,9 @@ def generar_video():
 
 
     except Exception as e:
-        print("❌ ERROR AL CREAR TAREA:", e)
-        return jsonify({"error": f"Error al crear tarea: {str(e)}"}), 500
+                print("❌ ERROR GLOBAL EN /video:", e, flush=True)
+
+                return jsonify({"error": f"Error inesperado en /video: {str(e)}"}), 500
 
     start, TIMEOUT = time.time(), 600
     j = None  # Para asegurar que esté definida
