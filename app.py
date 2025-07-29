@@ -209,23 +209,32 @@ def generar_video():
         task = requests.post(f"{BASE_URL}/generate/video/{provider}/generation",
                              json=payload, headers=headers, timeout=60)
         task.raise_for_status()
+        gen_id = task.json().get("id") or task.json().get("generation_id")
+        print("🆔 task:", gen_id)
     except Exception as e:
         print("❌ ERROR AL CREAR TAREA:", e)
         return jsonify({"error": f"Error al crear tarea: {str(e)}"}), 500
 
-    gen_id = task.json().get("id") or task.json().get("generation_id")
-    print("🆔 task:", gen_id)
-
     start, TIMEOUT = time.time(), 600
+    j = None  # Para asegurar que esté definida
     while time.time() - start < TIMEOUT:
-        poll = requests.get(
-            f"{BASE_URL}/generate/video/{provider}/generation",
-            params={"generation_id": gen_id},
-            headers=headers, timeout=30
-        )
-        j = poll.json()
+        try:
+            poll = requests.get(
+                f"{BASE_URL}/generate/video/{provider}/generation",
+                params={"generation_id": gen_id},
+                headers=headers, timeout=30
+            )
+            poll.raise_for_status()
+            j = poll.json()
+            print("📦 Respuesta completa:", j)
+        except Exception as e:
+            return jsonify({"error": f"Error al hacer polling: {str(e)}"}), 500
+
         status = j.get("status")
         print("⏳", gen_id, status)
+
+        if not status:
+            return jsonify({"error": "La respuesta no contiene 'status'", "raw": j}), 500
 
         if status in ("waiting", "active", "queued", "generating"):
             time.sleep(10)
@@ -233,16 +242,19 @@ def generar_video():
 
         if status in ("succeeded", "completed", "success"):
             video_block = j.get("video", {})
-            video_url   = video_block.get("url")
+            video_url = video_block.get("url")
             if not video_url:
                 return jsonify({"error": "Video listo pero sin URL", "raw": j}), 500
 
+            # Crear nombre seguro del archivo
             safe_id = gen_id.split(":")[0]
-            rand    = random.randint(1000, 9999)
-            slug_t  = slug(title)
+            rand = random.randint(1000, 9999)
+            slug_t = slug(title)
             filename = f"{speaker}_{slug_t}_{safe_id}_{rand}.mp4"
+
             tmp_path = os.path.join(TEMP_DIR, filename)
             static_path = os.path.join("static", "videos", filename)
+            os.makedirs(os.path.dirname(static_path), exist_ok=True)
 
             print("⬇️  Descargando a:", tmp_path)
             try:
@@ -256,18 +268,19 @@ def generar_video():
 
                 print(f"✅ Archivo descargado y guardado en: {static_path}")
                 return jsonify({
-    "url": f"/descargar-video/{filename}",
-    "local_path": tmp_path.replace("\\", "/")
-})
+                    "url": f"/descargar-video/{filename}",
+                    "local_path": tmp_path.replace("\\", "/")
+                })
 
             except Exception as e:
                 return jsonify({"error": f"Fallo al descargar o guardar: {e}"}), 500
 
         else:
             print("❌ Estado inesperado:", status)
-            break
+            return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
 
-    return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
+    return jsonify({"error": f"Timeout alcanzado. Último estado: {status}", "raw": j}), 500
+
 
 
 
@@ -439,106 +452,6 @@ def transcribir_audio():
 
 
 
-
-# @app.route("/videoWeb", methods=["POST"])
-# def generar_video_web():
-#     data     = request.get_json()
-#     email    = data.get("email", "").strip().lower()
-#     prompt   = data.get("prompt", "").strip()
-#     title    = data.get("title",  "").strip() or "scene"
-#     speaker  = data.get("speaker", "video").lower().strip()
-
-#     if not email or not prompt:
-#         return jsonify({"error": "Faltan datos"}), 400
-
-#     guardar_usuario(email)
-#     modo = obtener_modo(email)
-
-#     headers = {
-#         "Authorization": f"Bearer {AIML_KEY}",
-#         "Content-Type": "application/json"
-#     }
-
-#     if modo == "premium":
-#         payload = {
-#             "model": "veo2",
-#             "prompt": prompt,
-#             "aspect_ratio": "16:9",
-#             "duration": 8,
-#             "negative_prompt": "",
-#             "enhance_prompt": True,
-#             "seed": 1,
-#             "generate_audio": False
-#         }
-#         provider = "google"
-#     else:
-#         payload = {
-#             "model": "minimax/hailuo-02",
-#             "prompt": prompt,
-#             "prompt_optimizer": True,
-#             "duration": 6,
-#             "resolution": "768P"
-#         }
-#         provider = "minimax"
-
-#     try:
-#         task = requests.post(f"{BASE_URL}/generate/video/{provider}/generation",
-#                              json=payload, headers=headers, timeout=60)
-#         task.raise_for_status()
-#     except Exception as e:
-#         print("❌ ERROR AL CREAR TAREA:", e)
-#         return jsonify({"error": f"Error al crear tarea: {str(e)}"}), 500
-
-#     gen_id = task.json().get("id") or task.json().get("generation_id")
-#     print("🆔 task:", gen_id)
-
-#     start, TIMEOUT = time.time(), 600
-#     while time.time() - start < TIMEOUT:
-#         poll = requests.get(
-#             f"{BASE_URL}/generate/video/{provider}/generation",
-#             params={"generation_id": gen_id},
-#             headers=headers, timeout=30
-#         )
-#         j = poll.json()
-#         status = j.get("status")
-#         print("⏳", gen_id, status)
-
-#         if status in ("waiting", "active", "queued", "generating"):
-#             time.sleep(10)
-#             continue
-
-#         if status in ("succeeded", "completed", "success"):
-#             video_block = j.get("video", {})
-#             video_url   = video_block.get("url")
-#             if not video_url:
-#                 return jsonify({"error": "Video listo pero sin URL", "raw": j}), 500
-
-#             # 🧾 Archivo final
-#             safe_id = gen_id.split(":")[0]
-#             rand = random.randint(1000, 9999)
-#             slug_t = slug(title)
-#             filename = f"{speaker}_{slug_t}_{safe_id}_{rand}.mp4"
-
-#             static_dir = os.path.join("static", "videos")
-#             os.makedirs(static_dir, exist_ok=True)
-#             final_path = os.path.join(static_dir, filename)
-
-#             print("⬇️ Descargando a:", final_path)
-#             try:
-#                 with requests.get(video_url, stream=True, timeout=120) as vid, \
-#                      open(final_path, "wb") as f:
-#                     for chunk in vid.iter_content(8192):
-#                         f.write(chunk)
-#             except Exception as e:
-#                 return jsonify({"error": f"Fallo al descargar: {e}"}), 500
-
-#             print(f"✅ Archivo descargado: {final_path}")
-#             return jsonify({"url": f"/descargar-video/{filename}"})
-
-
-#         return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
-
-#     return jsonify({"error": "Timeout"}), 504
 
 
 @app.route("/videos-generados")
