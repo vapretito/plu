@@ -204,16 +204,17 @@ def generar_video():
             "resolution": "768P"
         }
         provider = "minimax"
-
+    
+    print("📤 URL:", f"{BASE_URL}/generate/video/{provider}/generation", flush=True)
+    print("📤 Payload:", payload, flush=True)
+    print("📤 Headers:", headers, flush=True)
     try:
         task = requests.post(f"{BASE_URL}/generate/video/{provider}/generation",
                              json=payload, headers=headers, timeout=60)
         task.raise_for_status()
         gen_id = task.json().get("id") or task.json().get("generation_id")
         print("🆔 task:", gen_id)
-        print("📤 URL:", f"{BASE_URL}/generate/video/{provider}/generation", flush=True)
-        print("📤 Payload:", payload, flush=True)
-        print("📤 Headers:", headers, flush=True)
+        
 
 
     except Exception as e:
