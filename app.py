@@ -211,6 +211,11 @@ def generar_video():
         task.raise_for_status()
         gen_id = task.json().get("id") or task.json().get("generation_id")
         print("🆔 task:", gen_id)
+        print("📤 URL:", f"{BASE_URL}/generate/video/{provider}/generation", flush=True)
+        print("📤 Payload:", payload, flush=True)
+        print("📤 Headers:", headers, flush=True)
+
+
     except Exception as e:
         print("❌ ERROR AL CREAR TAREA:", e)
         return jsonify({"error": f"Error al crear tarea: {str(e)}"}), 500
