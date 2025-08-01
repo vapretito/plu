@@ -4,3 +4,5 @@ openai
 yt-dlp
 python-dotenv
 flask-cors
+
+google-generativeai
