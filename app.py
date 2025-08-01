@@ -10,8 +10,11 @@ import uuid
 import base64
 import time
 from flask import send_from_directory
+from google import genai
+from google.genai import types
 
 
+client = genai.Client(api_key="AIzaSyDckcBgpfmdZPwsCxL2vrUJ4s7YBPy1ht0")
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -112,10 +115,10 @@ def tokens_restantes(email):
 
 
 
-TEMP_DIR = "C:/temp"
+TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
 app = Flask(__name__)
-CORS(app, origins=["https://generator.zunzun.ai"])
+CORS(app)  # 🔥 Esto va acá, una vez y bien
 AIML_KEY = "228a4680f87d41c1966eea088efaa68d"  # Valor literal directamente
 AIML_MODEL = "google/veo3"
 BASE_URL   = "https://api.aimlapi.com/v2"
@@ -176,16 +179,54 @@ def generar_video():
         return jsonify({"error": "Faltan datos"}), 400
 
     guardar_usuario(email)
-    modo = obtener_modo(email) or "standard"
-    print("🎛️ Modo detectado:", modo, flush=True)
+    modo = obtener_modo(email)
+
+    if modo == "standard":
+        # ✅ MODO STANDARD → Usar Gemini Veo 2
+        try:
+            config = types.GenerateVideosConfig(
+            negative_prompt="low quality, cartoon"
+          )
+
+            operation_name = client.models.generate_videos(
+             model="veo-2.0-generate-001",
+             prompt=prompt,
+             config=config
+           )
 
 
-    headers = {
-        "Authorization": f"Bearer {AIML_KEY}",
-        "Content-Type": "application/json"
-    }
+            while True:
+              operation = client.operations.get(operation_name)
+              if operation.done:
+                    break
+              print("⏳ Generando video (Gemini)...")
+              time.sleep(10)
 
-    if modo == "premium":
+
+
+
+            generated_video = operation.response.generated_videos[0]
+            filename = f"{speaker}_{slug(title)}_{uuid.uuid4().hex[:6]}.mp4"
+            output_path = os.path.join("static", "videos", filename)
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+            client.files.download(file=generated_video.video)
+            generated_video.video.save(output_path)
+
+
+            print(f"✅ Guardado Gemini: {output_path}")
+            return jsonify({"url": f"/static/videos/{filename}"})
+        except Exception as e:
+            print("❌ Error Gemini:", e)
+            return jsonify({"error": f"Gemini: {str(e)}"}), 500
+
+    else:
+        # ✅ MODO PREMIUM → Usar AIMLAPI como antes
+        headers = {
+            "Authorization": f"Bearer {AIML_KEY}",
+            "Content-Type": "application/json"
+        }
+
         payload = {
             "model": "veo2",
             "prompt": prompt,
@@ -197,100 +238,66 @@ def generar_video():
             "generate_audio": True
         }
         provider = "google"
-    else:
-        payload = {
-            "model": "minimax/hailuo-02",
-            "prompt": prompt,
-            "prompt_optimizer": True,
-            "duration": 6,
-            "resolution": "768P"
-        }
-        provider = "minimax"
-    
-    print("📤 URL:", f"{BASE_URL}/generate/video/{provider}/generation", flush=True)
-    print("📤 Payload:", payload, flush=True)
-    print("📤 Headers:", headers, flush=True)
-    try:
-        task = requests.post(f"{BASE_URL}/generate/video/{provider}/generation",
-                             json=payload, headers=headers, timeout=60)
-        task.raise_for_status()
-        gen_id = task.json().get("id") or task.json().get("generation_id")
-        print("🆔 task:", gen_id)
-        
 
-
-    except Exception as e:
-                print("❌ ERROR GLOBAL EN /video:", e, flush=True)
-
-                return jsonify({"error": f"Error inesperado en /video: {str(e)}"}), 500
-
-    start, TIMEOUT = time.time(), 600
-    j = None  # Para asegurar que esté definida
-    while time.time() - start < TIMEOUT:
         try:
-            poll = requests.get(
-                f"{BASE_URL}/generate/video/{provider}/generation",
-                params={"generation_id": gen_id},
-                headers=headers, timeout=30
-            )
-            poll.raise_for_status()
-            j = poll.json()
-            print("📦 Respuesta completa:", j)
+            task = requests.post(f"{BASE_URL}/generate/video/{provider}/generation",
+                                 json=payload, headers=headers, timeout=60)
+            task.raise_for_status()
+            gen_id = task.json().get("id") or task.json().get("generation_id")
+            print("🆔 task:", gen_id)
         except Exception as e:
-            return jsonify({"error": f"Error al hacer polling: {str(e)}"}), 500
+            return jsonify({"error": f"AIMLAPI: {str(e)}"}), 500
 
-        status = j.get("status")
-        print("⏳", gen_id, status)
-
-        if not status:
-            return jsonify({"error": "La respuesta no contiene 'status'", "raw": j}), 500
-
-        if status in ("waiting", "active", "queued", "generating"):
-            time.sleep(10)
-            continue
-
-        if status in ("succeeded", "completed", "success"):
-            video_block = j.get("video", {})
-            video_url = video_block.get("url")
-            if not video_url:
-                return jsonify({"error": "Video listo pero sin URL", "raw": j}), 500
-
-            # Crear nombre seguro del archivo
-            safe_id = gen_id.split(":")[0]
-            rand = random.randint(1000, 9999)
-            slug_t = slug(title)
-            filename = f"{speaker}_{slug_t}_{safe_id}_{rand}.mp4"
-
-            tmp_path = os.path.join(TEMP_DIR, filename)
-            VIDEOS_DIR = os.path.join(STATIC_DIR, "videos")
-            os.makedirs(VIDEOS_DIR, exist_ok=True)
-            static_path = os.path.join(VIDEOS_DIR, filename)
-            os.makedirs(os.path.dirname(static_path), exist_ok=True)
-
-            print("⬇️  Descargando a:", tmp_path)
+        start = time.time()
+        while time.time() - start < 600:
             try:
-                with requests.get(video_url, stream=True, timeout=120) as vid, \
-                     open(tmp_path, "wb") as f:
-                    for chunk in vid.iter_content(8192):
-                        f.write(chunk)
-
-                with open(tmp_path, "rb") as source, open(static_path, "wb") as dest:
-                    dest.write(source.read())
-
-                print(f"✅ Archivo descargado y guardado en: {static_path}")
-                return jsonify({
-                    "url": f"/descargar-video/{filename}",
-                    "local_path": tmp_path.replace("\\", "/")
-                })
-
+                poll = requests.get(
+                    f"{BASE_URL}/generate/video/{provider}/generation",
+                    params={"generation_id": gen_id},
+                    headers=headers, timeout=30
+                )
+                poll.raise_for_status()
+                j = poll.json()
             except Exception as e:
-                return jsonify({"error": f"Fallo al descargar o guardar: {e}"}), 500
+                return jsonify({"error": f"AIMLAPI Polling: {str(e)}"}), 500
 
-        else:
-            print("❌ Estado inesperado:", status)
-            return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
+            status = j.get("status")
+            if status in ("waiting", "active", "queued", "generating"):
+                time.sleep(10)
+                continue
 
-    return jsonify({"error": f"Timeout alcanzado. Último estado: {status}", "raw": j}), 500
+            if status in ("succeeded", "completed", "success"):
+                video_block = j.get("video", {})
+                video_url = video_block.get("url")
+                if not video_url:
+                    return jsonify({"error": "Video listo pero sin URL", "raw": j}), 500
+
+                safe_id = gen_id.split(":")[0]
+                rand = random.randint(1000, 9999)
+                slug_t = slug(title)
+                filename = f"{speaker}_{slug_t}_{safe_id}_{rand}.mp4"
+                tmp_path = os.path.join(TEMP_DIR, filename)
+                static_path = os.path.join("static", "videos", filename)
+                os.makedirs(os.path.dirname(static_path), exist_ok=True)
+
+                try:
+                    with requests.get(video_url, stream=True, timeout=120) as vid, \
+                         open(tmp_path, "wb") as f:
+                        for chunk in vid.iter_content(8192):
+                            f.write(chunk)
+                    with open(tmp_path, "rb") as src, open(static_path, "wb") as dst:
+                        dst.write(src.read())
+
+                    print(f"✅ AIMLAPI guardado: {static_path}")
+                    return jsonify({"url": f"/descargar-video/{filename}"})
+                except Exception as e:
+                    return jsonify({"error": f"Descarga AIMLAPI: {str(e)}"}), 500
+
+            else:
+                return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
+
+        return jsonify({"error": f"Timeout AIMLAPI. Último estado: {status}", "raw": j}), 500
+
 
 
 
@@ -386,8 +393,6 @@ def generar_audio():
 def transcribir_audio():
     import time
     from mimetypes import guess_type
-    from uuid import uuid4
-    import subprocess
 
     data = request.get_json()
     ruta_relativa = data.get("ruta")
@@ -396,41 +401,25 @@ def transcribir_audio():
     if not ruta_relativa or not os.path.exists(ruta_relativa):
         return jsonify({"error": "Archivo no encontrado"}), 400
 
-    extension = os.path.splitext(ruta_relativa)[1].lower()
-
-    # Si es video, convertir a WAV
-    if extension in [".mp4", ".mov", ".avi", ".mkv"]:
-        print("🎬 Es video, extrayendo audio...")
-        nuevo_nombre = f"audio_extraido_{uuid4().hex[:8]}.wav"
-        ruta_wav = os.path.join("temp", nuevo_nombre)  # carpeta temp o donde prefieras
-
-        FFMPEG_PATH = "ffmpeg"  # o la ruta completa si estás en Windows
-        subprocess.run([
-            FFMPEG_PATH,
-            "-i", ruta_relativa,
-            "-vn", "-acodec", "pcm_s16le", ruta_wav
-        ], check=True)
-
-        ruta_final = ruta_wav
-    else:
-        ruta_final = ruta_relativa
-
-    nombre_archivo = os.path.basename(ruta_final)
-    mimetype = guess_type(ruta_final)[0] or "audio/mpeg"
+    nombre_archivo = os.path.basename(ruta_relativa)
+    mimetype = guess_type(ruta_relativa)[0] or "audio/mpeg"
 
     headers = {
         "Authorization": f"Bearer {AIML_KEY}"
     }
 
     payload = {
-        "model": "#g1_nova-2-general",
-        "punctuate": True,
-        "detect_entities": True,
-        "detect_language": True
-    }
+    "model": "#g1_whisper-medium",
+    "punctuate": True,
+    "detect_language": True,
+    "detect_entities": True,
+    "diarize": True,
+    "dictation": True,
+    "smart_format": True
+}
 
     files = {
-        "audio": (nombre_archivo, open(ruta_final, "rb"), mimetype)
+        "audio": (nombre_archivo, open(ruta_relativa, "rb"), mimetype)
     }
 
     response = requests.post("https://api.aimlapi.com/v1/stt/create", headers=headers, data=payload, files=files)
@@ -445,7 +434,7 @@ def transcribir_audio():
 
     # Paso 2: verificar resultado
     check_url = f"https://api.aimlapi.com/v1/stt/{generation_id}"
-    for _ in range(10):
+    for _ in range(20):
         check_resp = requests.get(check_url, headers=headers)
         result = check_resp.json()
         print("🔄 Check:", result)
@@ -459,6 +448,7 @@ def transcribir_audio():
         time.sleep(2)
 
     return jsonify({"error": "Timeout esperando transcripción"}), 500
+
 
 
 
