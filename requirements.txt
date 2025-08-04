@@ -5,4 +5,4 @@ yt-dlp
 python-dotenv
 flask-cors
 
-google-generativeai==0.4.1
+google-generativeai>=0.5.0
