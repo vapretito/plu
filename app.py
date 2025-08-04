@@ -6,7 +6,7 @@ import os, time, tempfile
 import random, re
 import base64
 import google.generativeai as genai
-from google.generativeai import GenerativeModel, configure
+from google.generativeai import GenerativeModel, configure, types
 
 TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -43,14 +43,14 @@ def generar_video():
         if not prompt:
             return jsonify({"error": "Prompt vacío"}), 400
 
-        # Configurar cliente Gemini
-        genai.configure(api_key="AIzaSyDckcBgpfmdZPwsCxL2vrUJ4s7YBPy1ht0")
+        client = genai.Client(api_key="AIzaSyDckcBgpfmdZPwsCxL2vrUJ4s7YBPy1ht0")
 
-        model = genai.GenerativeModel(model_name="veo-2.0-generate-001")
+        config = types.GenerateVideosConfig(negative_prompt="low quality, cartoon")
 
-        operation = model.generate_video(
+        operation = client.models.generate_videos(
+            model="veo-2.0-generate-001",
             prompt=prompt,
-            negative_prompt="low quality, cartoon",
+            config=config
         )
 
         # Esperar resultado
