@@ -97,8 +97,9 @@ def generar_video():
             except Exception as e:
                 return jsonify({"error": f"Fallo al descargar: {e}"}), 500
 
-            print(f"✅ Archivo descargado: {tmp_path}")
-            return jsonify({"local_path": tmp_path})   # ← lo que espera main.js
+            print(f"📤 Enviando URL pública: {video_url}")
+            return jsonify({"video_url": video_url})
+
 
         return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
 
