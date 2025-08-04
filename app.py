@@ -5,8 +5,8 @@ from flask_cors import CORS
 import os, time, tempfile
 import random, re
 import base64
-import google.generativeai as genai
-from google.generativeai import GenerativeModel, configure, types
+from google import genai
+from google.genai import types
 
 TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
