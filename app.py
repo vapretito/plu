@@ -5,8 +5,7 @@ from flask_cors import CORS
 import os, time, tempfile
 import random, re
 import base64
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 
 TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -34,24 +33,22 @@ def slug(texto: str) -> str:
 
 @app.route("/video", methods=["POST"])
 def generar_video():
+    from google.generativeai import GenerativeModel, configure
+
     try:
-        data     = request.get_json()
-        prompt   = data.get("prompt", "").strip()
-        title    = data.get("title",  "").strip()
-        speaker  = data.get("speaker", "video").lower().strip()
+        data = request.get_json()
+        prompt = data.get("prompt", "").strip()
+        title  = data.get("title", "").strip()
+        speaker = data.get("speaker", "video").lower().strip()
 
         if not prompt:
             return jsonify({"error": "Prompt vacío"}), 400
 
-        client = genai.Client(api_key="AIzaSyDckcBgpfmdZPwsCxL2vrUJ4s7YBPy1ht0")
+        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+        model = GenerativeModel("veo-3.0-generate-preview")
 
-        config = types.GenerateVideosConfig(negative_prompt="low quality, cartoon")
+        operation = model.generate_video(prompt=prompt)
 
-        operation = client.models.generate_videos(
-            model="veo-2.0-generate-001",
-            prompt=prompt,
-            config=config
-        )
 
         # Esperar resultado
         start, TIMEOUT = time.time(), 600
