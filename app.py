@@ -4,8 +4,6 @@ import io
 from flask_cors import CORS
 import os, time, tempfile
 import random, re
-import base64
-import google.generativeai as genai
 
 TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -33,74 +31,78 @@ def slug(texto: str) -> str:
 
 @app.route("/video", methods=["POST"])
 def generar_video():
-    from google.generativeai import GenerativeModel, configure
+    data     = request.get_json()
+    prompt   = data.get("prompt", "").strip()
+    title    = data.get("title",  "").strip()
+    speaker  = data.get("speaker", "video").lower().strip()
 
-    try:
-        data = request.get_json()
-        prompt = data.get("prompt", "").strip()
-        title  = data.get("title", "").strip()
-        speaker = data.get("speaker", "video").lower().strip()
+    if not prompt:
+        return jsonify({"error": "Prompt vacío"}), 400
 
-        if not prompt:
-            return jsonify({"error": "Prompt vacío"}), 400
+    # ─── 1) Crear tarea en Hailuo-02 ───────────────────────────────
+    headers = {
+        "Authorization": f"Bearer {AIML_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "minimax/hailuo-02",
+        "prompt": prompt, 
+        "prompt_optimizer": True,
+        "duration": 6,
+        "resolution": "768P"
+    }
+    task = requests.post(
+        f"{BASE_URL}/generate/video/minimax/generation",
+        json=payload, headers=headers, timeout=60
+    )
+    if task.status_code >= 400:
+        return jsonify({"error": task.text}), task.status_code
 
-        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-        model = GenerativeModel("veo-3.0-generate-preview")
+    gen_id = task.json().get("generation_id") or task.json().get("id")
+    print("🆔 task:", gen_id)
 
-        operation = model.generate_video(prompt=prompt)
+    # ─── 2) Polling ────────────────────────────────────────────────
+    start, TIMEOUT = time.time(), 600
+    while time.time() - start < TIMEOUT:
+        poll = requests.get(
+            f"{BASE_URL}/generate/video/minimax/generation",
+            params={"generation_id": gen_id},
+            headers=headers, timeout=30
+        )
+        j = poll.json()
+        status = j.get("status")
+        print("⏳", gen_id, status)
 
-
-        # Esperar resultado
-        start, TIMEOUT = time.time(), 600
-        while time.time() - start < TIMEOUT:
-            if operation.done:
-                break
-            print("⏳ Esperando video Veo 3...")
+        if status in ("queued", "waiting", "generating", "active"):
             time.sleep(10)
-            operation = genai.get_operation(operation.name)
+            continue
 
-        if not operation.response or not operation.response.generated_videos:
-            return jsonify({"error": "Video listo pero sin archivo"}), 500
+        if status in ("succeeded", "completed", "success"):
+            video_url = j.get("video", {}).get("url")
+            if not video_url:
+                return jsonify({"error": "Video listo pero sin URL", "raw": j}), 500
 
-        generated_video = operation.response.generated_videos[0]
-        video_uri = generated_video.video.uri
+            # ─── 3) Descarga con nombre personalizado ──────────────
+            rand      = random.randint(1000, 9999)
+            slug_titl = slug(title)
+            filename  = f"{speaker}_{slug_titl}_{rand}.mp4"
+            tmp_path  = os.path.join(TEMP_DIR, filename)
+            print("⬇️  Descargando a:", tmp_path)
 
-        # Descargar archivo
-        response = requests.get(video_uri)
-        if response.status_code != 200:
-            return jsonify({"error": "Error al descargar el video"}), 500
+            try:
+                with requests.get(video_url, stream=True, timeout=120) as vid, \
+                     open(tmp_path, "wb") as f:
+                    for chunk in vid.iter_content(8192):
+                        f.write(chunk)
+            except Exception as e:
+                return jsonify({"error": f"Fallo al descargar: {e}"}), 500
 
-        slug_titl = slug(title)
-        rand = random.randint(1000, 9999)
-        filename = f"{speaker}_{slug_titl}_{rand}.mp4"
-        output_dir = os.path.join("static", "videos")
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, filename)
+            print(f"✅ Archivo descargado: {tmp_path}")
+            return jsonify({"local_path": tmp_path})   # ← lo que espera main.js
 
-        with open(output_path, "wb") as f:
-            f.write(response.content)
+        return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
 
-        print(f"✅ Video guardado en {output_path}")
-
-        # Leer base64
-        with open(output_path, "rb") as f:
-            base64_video = base64.b64encode(f.read()).decode("utf-8")
-
-        # Devolver URL + nombre + base64
-        video_url = f"/static/videos/{filename}"
-        return jsonify({
-            "url_publica": video_url,
-            "nombre": filename,
-            "base64": base64_video
-        })
-
-    except Exception as e:
-        print("❌ Error:", str(e))
-        return jsonify({"error": str(e)}), 500
-
-
-
-
+    return jsonify({"error": "Timeout"}), 504
 
 
 
@@ -146,8 +148,6 @@ def generar_audio():
             as_attachment=False,
             download_name="voz.mp3"
         )
-    
-
     except requests.RequestException as e:
         return jsonify({"error": str(e)}), 500
 
@@ -197,7 +197,6 @@ Voice-over:
         return jsonify(response.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 
 @app.route("/")
