@@ -45,14 +45,17 @@ def generar_video():
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "minimax/hailuo-02",
-        "prompt": prompt, 
-        "prompt_optimizer": True,
-        "duration": 6,
-        "resolution": "768P"
-    }
+    "model": "google/veo3",
+    "prompt": prompt,
+    "aspect_ratio": "16:9",
+    "duration": 8,
+    "negative_prompt": "",         # opcional, podés dejarlo vacío
+    "enhance_prompt": True,
+    "seed": 1,
+    "generate_audio": False        # importante: False en mayúscula
+}
     task = requests.post(
-        f"{BASE_URL}/generate/video/minimax/generation",
+        f"{BASE_URL}/generate/video/google/generation",
         json=payload, headers=headers, timeout=60
     )
     if task.status_code >= 400:
