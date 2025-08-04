@@ -4,116 +4,9 @@ import io
 from flask_cors import CORS
 import os, time, tempfile
 import random, re
-import sqlite3
-from datetime import datetime
-import uuid
 import base64
-import time
-from flask import send_from_directory
 import google.generativeai as genai
-from google.generativeai.types import GenerateVideosConfig
-
-
-client = genai.Client(api_key="AIzaSyDckcBgpfmdZPwsCxL2vrUJ4s7YBPy1ht0")
-
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-os.makedirs(STATIC_DIR, exist_ok=True)
-
-
-DB_PATH = os.path.join(os.path.dirname(__file__), "usuarios.db")
-
-def conectar_db():
-    return sqlite3.connect(DB_PATH)
-
-def crear_tabla_si_no_existe():
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            nombre TEXT,
-            modo TEXT DEFAULT 'standard',
-            tokens_restantes INTEGER DEFAULT 10,
-            ultima_actividad TEXT
-        )
-    ''')
-    con.commit()
-    con.close()
-
-crear_tabla_si_no_existe()  # Ejecutar al iniciar
-def guardar_usuario(email, nombre="", modo="standard"):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("""
-        INSERT OR IGNORE INTO users (email, nombre, modo, ultima_actividad)
-        VALUES (?, ?, ?, ?)
-    """, (email, nombre, modo, datetime.now()))
-    con.commit()
-    con.close()
-
-
-def guardar_audio_db(email, voz, texto, archivo):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("""
-        INSERT INTO audios (email, voz, texto, archivo)
-        VALUES (?, ?, ?, ?)
-    """, (email, voz, texto, archivo))
-    con.commit()
-    con.close()
-
-
-def crear_tabla_audios():
-    with sqlite3.connect("usuarios.db") as conn:
-        cur = conn.cursor()
-        cur.execute("DROP TABLE IF EXISTS audios")  # 💥 Borrar la anterior
-        cur.execute("""
-            CREATE TABLE audios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT NOT NULL,
-                voz TEXT NOT NULL,
-                texto TEXT NOT NULL,
-                archivo TEXT NOT NULL,
-                fecha DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-        print("✅ Tabla 'audios' recreada con columna 'fecha'.")
-
-
-# Llamar a la función (una sola vez)
-crear_tabla_audios()
-
-
-def obtener_modo(email):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT modo FROM users WHERE email = ?", (email,))
-    fila = cur.fetchone()
-    con.close()
-    return fila[0] if fila else None
-
-def descontar_token(email):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("""
-        UPDATE users SET tokens_restantes = tokens_restantes - 1,
-                         ultima_actividad = ?
-        WHERE email = ? AND tokens_restantes > 0
-    """, (datetime.now(), email))
-    con.commit()
-    con.close()
-
-def tokens_restantes(email):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT tokens_restantes FROM users WHERE email = ?", (email,))
-    fila = cur.fetchone()
-    con.close()
-    return fila[0] if fila else 0
-
-
+from google.generativeai import GenerativeModel, configure
 
 TEMP_DIR = r"C:\temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -132,34 +25,6 @@ VOCES = {
     "helena": "Se2Vw1WbHmGbBbyWTuu4"
 }
 
-@app.route("/admin/usuarios", methods=["GET"])
-def admin_ver_usuarios():
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT id, email, modo, tokens_restantes FROM users")
-    usuarios = cur.fetchall()
-    con.close()
-    return jsonify(usuarios)
-
-@app.route("/admin/cambiar-modo", methods=["POST"])
-def admin_cambiar_modo():
-    data = request.get_json()
-    email = data.get("email")
-    nuevo_modo = data.get("modo")
-
-    if not email or nuevo_modo not in ("standard", "premium"):
-        return jsonify({"error": "Datos inválidos"}), 400
-
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("UPDATE users SET modo = ? WHERE email = ?", (nuevo_modo, email))
-    con.commit()
-    con.close()
-
-    return jsonify({"ok": True})
-
-
-
 def slug(texto: str) -> str:
     """Convierte un título en slug seguro para filename."""
     texto = texto.lower()
@@ -169,135 +34,72 @@ def slug(texto: str) -> str:
 
 @app.route("/video", methods=["POST"])
 def generar_video():
-    data     = request.get_json()
-    email    = data.get("email", "").strip().lower()
-    prompt   = data.get("prompt", "").strip()
-    title    = data.get("title",  "").strip() or "scene"
-    speaker  = data.get("speaker", "video").lower().strip()
+    try:
+        data     = request.get_json()
+        prompt   = data.get("prompt", "").strip()
+        title    = data.get("title",  "").strip()
+        speaker  = data.get("speaker", "video").lower().strip()
 
-    if not email or not prompt:
-        return jsonify({"error": "Faltan datos"}), 400
+        if not prompt:
+            return jsonify({"error": "Prompt vacío"}), 400
 
-    guardar_usuario(email)
-    modo = obtener_modo(email)
+        # Configurar cliente Gemini
+        genai.configure(api_key="AIzaSyDckcBgpfmdZPwsCxL2vrUJ4s7YBPy1ht0")
 
-    if modo == "standard":
-        # ✅ MODO STANDARD → Usar Gemini Veo 2
-        try:
-            config = types.GenerateVideosConfig(
-            negative_prompt="low quality, cartoon"
-          )
+        model = genai.GenerativeModel(model_name="veo-2.0-generate-001")
 
-            operation_name = client.models.generate_videos(
-             model="veo-2.0-generate-001",
-             prompt=prompt,
-             config=config
-           )
+        operation = model.generate_video(
+            prompt=prompt,
+            negative_prompt="low quality, cartoon",
+        )
 
+        # Esperar resultado
+        start, TIMEOUT = time.time(), 600
+        while time.time() - start < TIMEOUT:
+            if operation.done:
+                break
+            print("⏳ Esperando video Veo 3...")
+            time.sleep(10)
+            operation = genai.get_operation(operation.name)
 
-            while True:
-              operation = client.operations.get(operation_name)
-              if operation.done:
-                    break
-              print("⏳ Generando video (Gemini)...")
-              time.sleep(10)
+        if not operation.response or not operation.response.generated_videos:
+            return jsonify({"error": "Video listo pero sin archivo"}), 500
 
+        generated_video = operation.response.generated_videos[0]
+        video_uri = generated_video.video.uri
 
+        # Descargar archivo
+        response = requests.get(video_uri)
+        if response.status_code != 200:
+            return jsonify({"error": "Error al descargar el video"}), 500
 
+        slug_titl = slug(title)
+        rand = random.randint(1000, 9999)
+        filename = f"{speaker}_{slug_titl}_{rand}.mp4"
+        output_dir = os.path.join("static", "videos")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, filename)
 
-            generated_video = operation.response.generated_videos[0]
-            filename = f"{speaker}_{slug(title)}_{uuid.uuid4().hex[:6]}.mp4"
-            output_path = os.path.join("static", "videos", filename)
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(response.content)
 
-            client.files.download(file=generated_video.video)
-            generated_video.video.save(output_path)
+        print(f"✅ Video guardado en {output_path}")
 
+        # Leer base64
+        with open(output_path, "rb") as f:
+            base64_video = base64.b64encode(f.read()).decode("utf-8")
 
-            print(f"✅ Guardado Gemini: {output_path}")
-            return jsonify({"url": f"/static/videos/{filename}"})
-        except Exception as e:
-            print("❌ Error Gemini:", e)
-            return jsonify({"error": f"Gemini: {str(e)}"}), 500
+        # Devolver URL + nombre + base64
+        video_url = f"/static/videos/{filename}"
+        return jsonify({
+            "url_publica": video_url,
+            "nombre": filename,
+            "base64": base64_video
+        })
 
-    else:
-        # ✅ MODO PREMIUM → Usar AIMLAPI como antes
-        headers = {
-            "Authorization": f"Bearer {AIML_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": "veo2",
-            "prompt": prompt,
-            "aspect_ratio": "16:9",
-            "duration": 8,
-            "negative_prompt": "",
-            "enhance_prompt": True,
-            "seed": 1,
-            "generate_audio": True
-        }
-        provider = "google"
-
-        try:
-            task = requests.post(f"{BASE_URL}/generate/video/{provider}/generation",
-                                 json=payload, headers=headers, timeout=60)
-            task.raise_for_status()
-            gen_id = task.json().get("id") or task.json().get("generation_id")
-            print("🆔 task:", gen_id)
-        except Exception as e:
-            return jsonify({"error": f"AIMLAPI: {str(e)}"}), 500
-
-        start = time.time()
-        while time.time() - start < 600:
-            try:
-                poll = requests.get(
-                    f"{BASE_URL}/generate/video/{provider}/generation",
-                    params={"generation_id": gen_id},
-                    headers=headers, timeout=30
-                )
-                poll.raise_for_status()
-                j = poll.json()
-            except Exception as e:
-                return jsonify({"error": f"AIMLAPI Polling: {str(e)}"}), 500
-
-            status = j.get("status")
-            if status in ("waiting", "active", "queued", "generating"):
-                time.sleep(10)
-                continue
-
-            if status in ("succeeded", "completed", "success"):
-                video_block = j.get("video", {})
-                video_url = video_block.get("url")
-                if not video_url:
-                    return jsonify({"error": "Video listo pero sin URL", "raw": j}), 500
-
-                safe_id = gen_id.split(":")[0]
-                rand = random.randint(1000, 9999)
-                slug_t = slug(title)
-                filename = f"{speaker}_{slug_t}_{safe_id}_{rand}.mp4"
-                tmp_path = os.path.join(TEMP_DIR, filename)
-                static_path = os.path.join("static", "videos", filename)
-                os.makedirs(os.path.dirname(static_path), exist_ok=True)
-
-                try:
-                    with requests.get(video_url, stream=True, timeout=120) as vid, \
-                         open(tmp_path, "wb") as f:
-                        for chunk in vid.iter_content(8192):
-                            f.write(chunk)
-                    with open(tmp_path, "rb") as src, open(static_path, "wb") as dst:
-                        dst.write(src.read())
-
-                    print(f"✅ AIMLAPI guardado: {static_path}")
-                    return jsonify({"url": f"/descargar-video/{filename}"})
-                except Exception as e:
-                    return jsonify({"error": f"Descarga AIMLAPI: {str(e)}"}), 500
-
-            else:
-                return jsonify({"error": f"Estado inesperado: {status}", "raw": j}), 500
-
-        return jsonify({"error": f"Timeout AIMLAPI. Último estado: {status}", "raw": j}), 500
-
+    except Exception as e:
+        print("❌ Error:", str(e))
+        return jsonify({"error": str(e)}), 500
 
 
 
@@ -309,35 +111,12 @@ def generar_video():
 def generar_audio():
     data = request.json
     texto = data.get("texto", "").strip()
-    voz = data.get("voz", "lola")
-    email = data.get("email", "").strip()
+    voz = data.get("voz", "lola")  # por defecto lola
 
     if not texto:
         return jsonify({"error": "Texto vacío"}), 400
     if voz not in VOCES:
         return jsonify({"error": f"Voz no válida: {voz}"}), 400
-    if not email:
-        return jsonify({"error": "Email no proporcionado"}), 400
-
-    modo = obtener_modo(email)
-    print("👤 Modo del usuario:", modo)
-    if not modo:
-        return jsonify({"error": "Usuario no encontrado"}), 404
-
-    # Obtener velocidad siempre (aunque se ignore si es standard)
-    try:
-        speed = float(data.get("speed", 1.0))
-    except (ValueError, TypeError):
-        speed = 1.0
-        print("⚠️ Speed inválido, usando 1.0")
-
-    # Ajustar estilo/estabilidad solo si es premium
-    if modo == "premium":
-        style = float(data.get("style", 0.0))
-        stability = float(data.get("stability", 0.66))
-    else:
-        style = 0.0
-        stability = 0.66
 
     voice_id = VOCES[voz]
 
@@ -345,18 +124,18 @@ def generar_audio():
         "xi-api-key": API_KEY,
         "Content-Type": "application/json"
     }
-
+    style = data.get("style", 0.0)
+    stability = data.get("stability", 0.66)
     tts_data = {
-        "text": texto,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": stability,
-            "similarity_boost": 0.56,
-            "style": style,
-            "use_speaker_boost": True,
-            "speed": speed
-        }
+    "text": texto,
+    "model_id": "eleven_multilingual_v2",
+    "voice_settings": {
+        "stability": stability,
+        "similarity_boost": 0.56,
+        "style": style,
+        "use_speaker_boost": True
     }
+}
 
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
@@ -364,117 +143,16 @@ def generar_audio():
         tts_response = requests.post(tts_url, headers=headers, json=tts_data)
         tts_response.raise_for_status()
 
-        # Generar nombre único y ruta
-        safe_text = slug(texto)[:20] or "voz"
-        filename = f"{safe_text}_{uuid.uuid4().hex[:8]}.mp3"
-        ruta_guardado = os.path.join(STATIC_DIR, filename)
-
-        with open(ruta_guardado, "wb") as f:
-            f.write(tts_response.content)
-
-        guardar_audio_db(email, voz, texto, filename)
-
         return send_file(
-            ruta_guardado,
+            io.BytesIO(tts_response.content),
             mimetype="audio/mpeg",
             as_attachment=False,
             download_name="voz.mp3"
         )
+    
 
     except requests.RequestException as e:
-        print("❌ Error de ElevenLabs:", e)
         return jsonify({"error": str(e)}), 500
-
-
-
-
-
-@app.route("/transcribir", methods=["POST"])
-def transcribir_audio():
-    import time
-    from mimetypes import guess_type
-
-    data = request.get_json()
-    ruta_relativa = data.get("ruta")
-    email = data.get("email")
-
-    if not ruta_relativa or not os.path.exists(ruta_relativa):
-        return jsonify({"error": "Archivo no encontrado"}), 400
-
-    nombre_archivo = os.path.basename(ruta_relativa)
-    mimetype = guess_type(ruta_relativa)[0] or "audio/mpeg"
-
-    headers = {
-        "Authorization": f"Bearer {AIML_KEY}"
-    }
-
-    payload = {
-    "model": "#g1_whisper-medium",
-    "punctuate": True,
-    "detect_language": True,
-    "detect_entities": True,
-    "diarize": True,
-    "dictation": True,
-    "smart_format": True
-}
-
-    files = {
-        "audio": (nombre_archivo, open(ruta_relativa, "rb"), mimetype)
-    }
-
-    response = requests.post("https://api.aimlapi.com/v1/stt/create", headers=headers, data=payload, files=files)
-    if response.status_code != 201:
-        print("❌ Error de AIMLAB:", response.status_code, response.text)
-        return jsonify({"error": "Error en transcripción"}), 500
-
-    generation_id = response.json().get("generation_id")
-    print("🆔 generation_id:", generation_id)
-    if not generation_id:
-        return jsonify({"error": "No se recibió generation_id"}), 500
-
-    # Paso 2: verificar resultado
-    check_url = f"https://api.aimlapi.com/v1/stt/{generation_id}"
-    for _ in range(20):
-        check_resp = requests.get(check_url, headers=headers)
-        result = check_resp.json()
-        print("🔄 Check:", result)
-
-        if result.get("status") == "completed":
-            texto = result.get("result", {}).get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])[0].get("transcript", "")
-            return jsonify({"transcripcion": texto})
-        elif result.get("status") == "failed":
-            return jsonify({"error": "Transcripción fallida"}), 500
-
-        time.sleep(2)
-
-    return jsonify({"error": "Timeout esperando transcripción"}), 500
-
-
-
-
-
-
-
-@app.route("/videos-generados")
-def listar_videos_generados():
-    carpeta = os.path.join("static", "videos")
-    try:
-        archivos = os.listdir(carpeta)
-        # Filtramos solo .mp4 por seguridad
-        videos = [f for f in archivos if f.endswith(".mp4")]
-        return jsonify({"videos": videos})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/descargar-video/<path:filename>")
-def descargar_video(filename):
-    return send_from_directory("static/videos", filename, as_attachment=True)
-
-
-
-
-
-
 
 @app.route("/veo-prompts", methods=["POST"])
 def generar_prompt_para_veo():
@@ -522,189 +200,8 @@ Voice-over:
         return jsonify(response.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-@app.route("/verificar-usuario", methods=["POST"])
-def verificar_usuario():
-    data = request.get_json()
-    email = data.get("email")
-
-    if not email:
-        return jsonify({"error": "Correo no proporcionado"}), 400
-
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT modo, tokens_restantes FROM users WHERE email = ?", (email,))
-    fila = cur.fetchone()
-
-    if fila:
-        modo, tokens = fila
-        return jsonify({"modo": modo, "tokens_restantes": tokens})
-    else:
-        # Si no existe, lo registramos por primera vez
-        cur.execute("INSERT INTO users (email, tokens_restantes) VALUES (?, 10)", (email,))
-        con.commit()
-        return jsonify({"modo": "standard", "tokens_restantes": 10})
-
-@app.route("/usuarios", methods=["GET"])
-def ver_usuarios():
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT * FROM users")
-    datos = cur.fetchall()
-    con.close()
-    return jsonify(datos)
 
 
-@app.route("/audios/<email>", methods=["GET"])
-def obtener_audios(email):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("""
-        SELECT id, voz, texto, archivo, fecha
-        FROM audios
-        WHERE email = ?
-        ORDER BY fecha DESC
-    """, (email,))
-    audios = cur.fetchall()
-    con.close()
-
-    resultado = [
-        {
-            "id": audio_id,
-            "voz": voz,
-            "texto": texto,
-            "archivo": archivo,
-            "fecha": fecha
-        } for audio_id, voz, texto, archivo, fecha in audios
-    ]
-    return jsonify(resultado)
-
-
-
-@app.route("/eliminar-audio/<int:audio_id>", methods=["DELETE"])
-def eliminar_audio(audio_id):
-    con = conectar_db()
-    cur = con.cursor()
-    cur.execute("SELECT archivo FROM audios WHERE id = ?", (audio_id,))
-    fila = cur.fetchone()
-    if not fila:
-        con.close()
-        return jsonify({"error": "Audio no encontrado"}), 404
-
-    archivo = fila[0]
-    ruta = os.path.join(STATIC_DIR, archivo)
-
-    try:
-        if os.path.exists(ruta):
-            os.remove(ruta)  # Elimina archivo del servidor
-    except Exception as e:
-        print(f"⚠️ No se pudo eliminar el archivo: {e}")
-
-    cur.execute("DELETE FROM audios WHERE id = ?", (audio_id,))
-    con.commit()
-    con.close()
-
-    return jsonify({"ok": True})
-
-
-@app.route("/subir-audio", methods=["POST"])
-def subir_audio():
-    if "audio" not in request.files:
-        return jsonify({"error": "Archivo no recibido"}), 400
-
-    archivo = request.files["audio"]
-    nombre = archivo.filename
-
-    ruta = os.path.join("temp", nombre)
-    os.makedirs("temp", exist_ok=True)
-    archivo.save(ruta)
-
-    return jsonify({"ruta": ruta})
-
-@app.route("/resumir-video", methods=["POST", "OPTIONS"])
-def resumir_video_desde_link():
-    try:
-        if request.method == "OPTIONS":
-            return jsonify({"ok": True}), 200
-
-        from urllib.parse import urlparse
-        import subprocess
-        import glob
-
-        data = request.get_json()
-        url = data.get("url")
-        email = data.get("email")
-
-        if not url or not email:
-            return jsonify({"error": "Faltan datos"}), 400
-
-        nombre_base = f"video_{uuid.uuid4().hex[:8]}"
-        ruta_descarga = os.path.join(TEMP_DIR, nombre_base + ".%(ext)s")
-
-        print(f"🔗 Descargando: {url} → {ruta_descarga}")
-
-        # 🟡 Descargar video
-        subprocess.run(["yt-dlp", "-o", ruta_descarga, url], check=True)
-
-        # 🔍 Buscar archivo descargado real (puede ser .webm, .mp4, .mkv, etc.)
-        posibles_archivos = glob.glob(os.path.join(TEMP_DIR, nombre_base + ".*"))
-        if not posibles_archivos:
-            return jsonify({"error": "No se encontró el archivo de video descargado"}), 500
-
-        ruta_video_real = posibles_archivos[0]
-        print(f"🎬 Archivo real detectado: {ruta_video_real}")
-
-        # 🎧 Extraer audio
-        ruta_audio = os.path.join(TEMP_DIR, f"{nombre_base}.wav")
-        print(f"🎧 Extrayendo audio: {ruta_audio}")
-        FFMPEG_PATH = r"C:\Users\TitoM4lda\Desktop\ffmpeg-7.1.1-essentials_build\ffmpeg-7.1.1-essentials_build\bin\ffmpeg.exe"
-        subprocess.run([FFMPEG_PATH, "-i", ruta_video_real, "-vn", "-acodec", "pcm_s16le", ruta_audio], check=True)
-
-        # 🧠 Transcribir
-        print(f"📤 Enviando a transcribir...")
-        transcripcion_resp = requests.post("http://localhost:5000/transcribir", json={
-            "ruta": ruta_audio,
-            "email": email
-        })
-        transcripcion = transcripcion_resp.json().get("transcripcion", "").strip()
-        if not transcripcion:
-            return jsonify({
-                "error": "La transcripción fue vacía. Es posible que el video no tenga voz o el audio sea muy bajo."
-            }), 200
-
-        # 🤖 Generar resumen con ChatGPT
-        print("🤖 Solicitando resumen...")
-        resumen_prompt = f"Resume el siguiente texto de forma clara y breve:\n\n{transcripcion}"
-        headers = {
-            "Authorization": "Bearer 228a4680f87d41c1966eea088efaa68d",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "chatgpt-4o-latest",
-            "messages": [
-                {"role": "user", "content": resumen_prompt}
-            ],
-            "temperature": 0.5,
-            "max_tokens": 600
-        }
-
-        resp = requests.post("https://api.aimlapi.com/v1/chat/completions", json=payload, headers=headers)
-        resumen = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
-
-        return jsonify({
-            "resumen": resumen,
-            "transcripcion": transcripcion
-        })
-
-    except Exception as e:
-        print("❌ ERROR GENERAL EN /resumir-video:", e)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/")
-def home():
-    return "✅ API en línea y funcionando"
 
 if __name__ == "__main__":
-    import os
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=True)
