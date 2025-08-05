@@ -45,15 +45,15 @@ def generar_video():
         "Content-Type": "application/json"
     }
     payload = {
-    "model": "google/veo3",
-    "prompt": prompt,
-    "aspect_ratio": "16:9",
-    "duration": 8,
-    "negative_prompt": "",         # opcional, podés dejarlo vacío
-    "enhance_prompt": True,
-    "seed": 1,
-    "generate_audio": False        # importante: False en mayúscula
-}
+            "model": "google/veo3",
+            "prompt": prompt,
+            "aspect_ratio": "16:9",
+            "duration": 8,
+            "negative_prompt": "",
+            "enhance_prompt": True,
+            "seed": 1,
+            "generate_audio": False
+        }
     task = requests.post(
         f"{BASE_URL}/generate/video/google/generation",
         json=payload, headers=headers, timeout=60
@@ -68,7 +68,7 @@ def generar_video():
     start, TIMEOUT = time.time(), 600
     while time.time() - start < TIMEOUT:
         poll = requests.get(
-            f"{BASE_URL}/generate/video/minimax/generation",
+            f"{BASE_URL}/generate/video/google/generation",
             params={"generation_id": gen_id},
             headers=headers, timeout=30
         )
